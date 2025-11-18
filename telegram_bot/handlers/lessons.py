@@ -1473,21 +1473,29 @@ async def handle_dashboard_button(update: Update, context: ContextTypes.DEFAULT_
         await query.edit_message_text(message, reply_markup=reply_markup)
 
     elif query.data == "dashboard_by_children":
-        # Доходи по дітях
-        all_payments = await db.get_payments(user_id)
-        month_payments = [
-            payment for payment in all_payments
-            if first_day <= payment.get('payment_date', '') <= last_day
+        # Доходи по дітях (на основі проведених занять)
+        all_lessons = await db.get_lessons(user_id)
+        month_lessons = [
+            lesson for lesson in all_lessons
+            if first_day <= lesson.get('date', '') <= last_day
+            and lesson.get('completed', False)
+            and not lesson.get('cancelled', False)
         ]
+
+        # Отримуємо всіх дітей для отримання цін
+        all_children = await db.get_children()
+        children_dict = {str(child['_id']): child for child in all_children}
 
         # Групуємо по дітях
         from collections import defaultdict
-        payments_by_child = defaultdict(float)
+        income_by_child = defaultdict(float)
 
-        for payment in month_payments:
-            child_id = str(payment['child_id'])
-            amount = payment.get('amount', 0)
-            payments_by_child[child_id] += amount
+        for lesson in month_lessons:
+            child_id = str(lesson['child_id'])
+            child = children_dict.get(child_id)
+            if child:
+                base_price = child.get('base_price', 0)
+                income_by_child[child_id] += base_price
 
         months_uk = {
             1: 'Січень', 2: 'Лютий', 3: 'Березень', 4: 'Квітень',
@@ -1498,10 +1506,10 @@ async def handle_dashboard_button(update: Update, context: ContextTypes.DEFAULT_
 
         message = f"👤 Доходи по дітях за {month_name}\n\n"
 
-        if payments_by_child:
+        if income_by_child:
             total = 0
-            for child_id, amount in payments_by_child.items():
-                child = await db.get_child(child_id)
+            for child_id, amount in income_by_child.items():
+                child = children_dict.get(child_id)
                 child_name = child.get('name', 'Без імені') if child else 'Невідома'
 
                 message += f"{child_name}: {amount:.0f} грн\n"
@@ -1509,7 +1517,7 @@ async def handle_dashboard_button(update: Update, context: ContextTypes.DEFAULT_
 
             message += f"\n💰 Всього: {total:.0f} грн"
         else:
-            message += "Немає оплат за цей місяць"
+            message += "Немає проведених занять за цей місяць"
 
         keyboard = [[InlineKeyboardButton("⬅️ Назад", callback_data="dashboard_back")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
