@@ -111,7 +111,9 @@ async def callback_logger(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обробка помилок"""
+    import traceback
     logger.error(f"Update {update} caused error {context.error}")
+    logger.error(''.join(traceback.format_exception(None, context.error, context.error.__traceback__)))
 
 
 async def post_init(application: Application):

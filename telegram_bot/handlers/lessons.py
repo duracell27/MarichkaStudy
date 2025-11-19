@@ -611,6 +611,47 @@ async def handle_timetable_button(update: Update, context: ContextTypes.DEFAULT_
         # Оновлюємо статус заняття
         await db.mark_lesson_completed(lesson_id, is_mark)
 
+        # Якщо заняття відмічається як проведене, плануємо наступне
+        if is_mark:
+            # Отримуємо інформацію про поточне заняття
+            current_lesson = await db.get_lesson(lesson_id)
+            if current_lesson:
+                child_id = str(current_lesson['child_id'])
+                start_time = current_lesson['start_time']
+                end_time = current_lesson['end_time']
+
+                # Знаходимо всі майбутні заплановані заняття для цієї дитини
+                all_child_lessons = await db.get_lessons(user_id, child_id)
+                future_lessons = [
+                    lesson for lesson in all_child_lessons
+                    if not lesson.get('completed', False)
+                    and not lesson.get('cancelled', False)
+                ]
+
+                # Знаходимо останнє заплановане заняття
+                if future_lessons:
+                    future_lessons.sort(key=lambda x: (x.get('date', ''), x.get('start_time', '')))
+                    last_lesson = future_lessons[-1]
+                    last_date = datetime.strptime(last_lesson['date'], "%Y-%m-%d")
+                else:
+                    # Якщо немає майбутніх занять, беремо поточне заняття
+                    last_date = datetime.strptime(current_lesson['date'], "%Y-%m-%d")
+
+                # Додаємо 7 днів
+                next_date = last_date + timedelta(days=7)
+                next_date_str = next_date.strftime("%Y-%m-%d")
+
+                # Створюємо нове заняття
+                await db.add_lesson(
+                    user_id=user_id,
+                    child_id=child_id,
+                    date=next_date_str,
+                    start_time=start_time,
+                    end_time=end_time
+                )
+
+                logger.info(f"Auto-scheduled next lesson for child {child_id} on {next_date_str} {start_time}-{end_time}")
+
         # Оновлюємо повідомлення
         date_str = today.strftime("%Y-%m-%d")
         date_display = today.strftime("%d.%m.%Y")
@@ -1173,8 +1214,13 @@ async def handle_balance_button(update: Update, context: ContextTypes.DEFAULT_TY
         # Список оплат
         message += "📝 Оплати:\n"
         if child_payments:
+            # Показуємо тільки останні 5
+            recent_payments = child_payments[-5:]
+            if len(child_payments) > 5:
+                message += f"(показано останні 5 з {len(child_payments)})\n"
+
             total_amount = 0
-            for payment in child_payments:
+            for payment in recent_payments:
                 date_str = payment.get('payment_date', '')
                 try:
                     date_obj = datetime.strptime(date_str, "%Y-%m-%d")
@@ -1188,7 +1234,9 @@ async def handle_balance_button(update: Update, context: ContextTypes.DEFAULT_TY
 
                 message += f"  • {date_display}: {amount} грн за {lessons_count} занять\n"
 
-            message += f"  Всього: {total_amount} грн\n\n"
+            # Рахуємо загальну суму всіх оплат (не тільки останніх 5)
+            total_all_amount = sum(p.get('amount', 0) for p in child_payments)
+            message += f"  Всього: {total_all_amount} грн\n\n"
         else:
             message += "  Немає оплат\n\n"
 
@@ -1300,7 +1348,7 @@ async def dashboard_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /dashboard - звіт за місяць"""
     user_id = update.effective_user.id
 
-    from datetime import datetime
+    from datetime import datetime, timedelta
     today = datetime.now()
 
     # Назва місяця українською
